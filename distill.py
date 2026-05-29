@@ -6,10 +6,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
 from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
-from sklearn.metrics import confusion_matrix
 
 from model import LightweightTBNet
 from dataset import TBDataset, get_transforms
+from metrics import evaluate as _evaluate
 
 EPOCHS = 20
 BATCH_SIZE = 16
@@ -56,21 +56,8 @@ def distillation_loss(student_logits, teacher_logits, labels, T, alpha):
 
 
 def evaluate(model, loader):
-    model.eval()
-    all_preds, all_labels, latencies = [], [], []
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs = imgs.to(device)
-            start = time.perf_counter()
-            preds = model(imgs).argmax(dim=1)
-            latencies.append((time.perf_counter() - start) * 1000 / imgs.size(0))
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    matrix = confusion_matrix(all_labels, all_preds).astype(float)
-    acc = matrix.diagonal().sum() / matrix.sum()
-    sensitivity = matrix[1, 1] / matrix[1].sum()
-    specificity = matrix[0, 0] / matrix[0].sum()
-    return acc, sensitivity, specificity, np.mean(latencies)
+    acc, sens, spec, auc, lat = _evaluate(model, loader, device)
+    return acc, sens, spec, auc, lat
 
 
 optimizer = torch.optim.Adam(student.parameters(), lr=LR)
@@ -96,7 +83,7 @@ for epoch in range(EPOCHS):
         total_loss += loss.item()
     scheduler.step()
 
-    val_acc, val_sens, val_spec, _ = evaluate(student, val_loader)
+    val_acc, val_sens, val_spec, _, _ = evaluate(student, val_loader)
     train_losses.append(total_loss / len(train_loader))
     val_accs.append(val_acc * 100)
     val_senss.append(val_sens * 100)
@@ -110,8 +97,8 @@ for epoch in range(EPOCHS):
 
 # --- Final evaluation ---
 student.load_state_dict(torch.load('checkpoints/student_best.pth', map_location=device))
-teacher_acc, teacher_sens, teacher_spec, teacher_lat = evaluate(teacher, test_loader)
-student_acc, student_sens, student_spec, student_lat = evaluate(student, test_loader)
+teacher_acc, teacher_sens, teacher_spec, teacher_auc, teacher_lat = evaluate(teacher, test_loader)
+student_acc, student_sens, student_spec, student_auc, student_lat = evaluate(student, test_loader)
 
 # --- Plot training curves ---
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
@@ -158,6 +145,7 @@ Test Set Results:
   Accuracy:        {teacher_acc*100:>6.2f}%       {student_acc*100:>6.2f}%     {(student_acc-teacher_acc)*100:+.2f}%
   Sensitivity:     {teacher_sens*100:>6.2f}%       {student_sens*100:>6.2f}%     {(student_sens-teacher_sens)*100:+.2f}%
   Specificity:     {teacher_spec*100:>6.2f}%       {student_spec*100:>6.2f}%     {(student_spec-teacher_spec)*100:+.2f}%
+  AUC-ROC:         {teacher_auc:>7.4f}       {student_auc:>7.4f}     {(student_auc-teacher_auc):+.4f}
   Latency (ms):   {teacher_lat:>7.2f}       {student_lat:>7.2f}
 
 Sensitivity Gap: {sens_gap:.2f}%

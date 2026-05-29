@@ -4,30 +4,26 @@ import torch
 import torch.quantization
 import numpy as np
 from torch.utils.data import DataLoader
-from sklearn.metrics import confusion_matrix
 
 from model import LightweightTBNet
 from dataset import TBDataset, get_transforms
+from metrics import evaluate as _eval_base
 
 
 def evaluate(model, loader, device):
+    acc, sens, spec, auc, mean_lat = _eval_base(model, loader, device)
+    # also compute median latency in a quick separate pass
+    lats = []
     model.eval()
-    all_preds, all_labels, latencies = [], [], []
     with torch.no_grad():
-        for imgs, labels in loader:
+        for imgs, _ in loader:
             imgs = imgs.to(device)
-            if device.type == 'cpu' and next(model.parameters()).dtype == torch.float16:
+            if next(model.parameters()).dtype == torch.float16:
                 imgs = imgs.half()
-            start = time.perf_counter()
-            preds = model(imgs).argmax(dim=1)
-            latencies.append((time.perf_counter() - start) * 1000)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.numpy())
-    matrix = confusion_matrix(all_labels, all_preds).astype(float)
-    acc = matrix.diagonal().sum() / matrix.sum()
-    sensitivity = matrix[1, 1] / matrix[1].sum()
-    specificity = matrix[0, 0] / matrix[0].sum()
-    return acc, sensitivity, specificity, np.mean(latencies), np.median(latencies)
+            t0 = time.perf_counter()
+            model(imgs)
+            lats.append((time.perf_counter() - t0) * 1000)
+    return acc, sens, spec, auc, mean_lat, float(np.median(lats))
 
 
 def get_model_size_mb(model):
@@ -49,7 +45,7 @@ fp32_model = LightweightTBNet(num_classes=2).to(cpu)
 fp32_model.load_state_dict(torch.load('checkpoints/best_model.pth', map_location=cpu))
 fp32_model.eval()
 fp32_size = get_model_size_mb(fp32_model)
-fp32_acc, fp32_sens, fp32_spec, fp32_mean_lat, fp32_med_lat = evaluate(fp32_model, test_loader, cpu)
+fp32_acc, fp32_sens, fp32_spec, fp32_auc, fp32_mean_lat, fp32_med_lat = evaluate(fp32_model, test_loader, cpu)
 
 # --- INT8 Dynamic Quantization ---
 int8_model = LightweightTBNet(num_classes=2).to(cpu)
@@ -61,7 +57,7 @@ int8_model = torch.quantization.quantize_dynamic(
     dtype=torch.qint8
 )
 int8_size = get_model_size_mb(int8_model)
-int8_acc, int8_sens, int8_spec, int8_mean_lat, int8_med_lat = evaluate(int8_model, test_loader, cpu)
+int8_acc, int8_sens, int8_spec, int8_auc, int8_mean_lat, int8_med_lat = evaluate(int8_model, test_loader, cpu)
 
 # --- FP16 ---
 fp16_model = LightweightTBNet(num_classes=2).to(cpu)
@@ -69,7 +65,7 @@ fp16_model.load_state_dict(torch.load('checkpoints/best_model.pth', map_location
 fp16_model.eval()
 fp16_model = fp16_model.half()
 fp16_size = get_model_size_mb(fp16_model)
-fp16_acc, fp16_sens, fp16_spec, fp16_mean_lat, fp16_med_lat = evaluate(fp16_model, test_loader, cpu)
+fp16_acc, fp16_sens, fp16_spec, fp16_auc, fp16_mean_lat, fp16_med_lat = evaluate(fp16_model, test_loader, cpu)
 
 torch.save(int8_model.state_dict(), 'checkpoints/int8_model.pth')
 torch.save(fp16_model.state_dict(), 'checkpoints/fp16_model.pth')
@@ -88,14 +84,17 @@ Speedup:          baseline    {fp32_mean_lat/int8_mean_lat:>6.2f}x     {fp32_mea
 Accuracy:         {fp32_acc*100:>6.2f}%     {int8_acc*100:>6.2f}%     {fp16_acc*100:>6.2f}%
 Sensitivity:      {fp32_sens*100:>6.2f}%     {int8_sens*100:>6.2f}%     {fp16_sens*100:>6.2f}%
 Specificity:      {fp32_spec*100:>6.2f}%     {int8_spec*100:>6.2f}%     {fp16_spec*100:>6.2f}%
+AUC-ROC:          {fp32_auc:>7.4f}     {int8_auc:>7.4f}     {fp16_auc:>7.4f}
 
 Delta from FP32 Baseline:
   INT8 Accuracy:      {(int8_acc - fp32_acc)*100:+.2f}%
   INT8 Sensitivity:   {(int8_sens - fp32_sens)*100:+.2f}%
   INT8 Specificity:   {(int8_spec - fp32_spec)*100:+.2f}%
+  INT8 AUC-ROC:       {(int8_auc - fp32_auc):+.4f}
   FP16 Accuracy:      {(fp16_acc - fp32_acc)*100:+.2f}%
   FP16 Sensitivity:   {(fp16_sens - fp32_sens)*100:+.2f}%
   FP16 Specificity:   {(fp16_spec - fp32_spec)*100:+.2f}%
+  FP16 AUC-ROC:       {(fp16_auc - fp32_auc):+.4f}
 
 Smartphone Target: model < 50MB, inference < 2000ms
   INT8 meets size target: {'YES' if int8_size < 50 else 'NO'} ({int8_size:.2f} MB)

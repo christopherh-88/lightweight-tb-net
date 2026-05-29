@@ -5,21 +5,24 @@
 Model Size (MB):    46.10       46.10       23.07
 Size Reduction:   baseline       0.0%       50.0%
 
-Latency Mean(ms):   18.02       21.09     1122.33
-Latency Med (ms):   17.19       19.75     1083.96
-Speedup:          baseline      0.85x       0.02x
+Latency Mean(ms):   17.85       21.27     1124.84
+Latency Med (ms):   18.31       17.15     1044.53
+Speedup:          baseline      0.84x       0.02x
 
 Accuracy:         100.00%     100.00%     100.00%
 Sensitivity:      100.00%     100.00%     100.00%
 Specificity:      100.00%     100.00%     100.00%
+AUC-ROC:           1.0000      1.0000      1.0000
 
 Delta from FP32 Baseline:
   INT8 Accuracy:      +0.00%
   INT8 Sensitivity:   +0.00%
   INT8 Specificity:   +0.00%
+  INT8 AUC-ROC:       +0.0000
   FP16 Accuracy:      +0.00%
   FP16 Sensitivity:   +0.00%
   FP16 Specificity:   +0.00%
+  FP16 AUC-ROC:       +0.0000
 
 Smartphone Target: model < 50MB, inference < 2000ms
   INT8 meets size target: YES (46.10 MB)

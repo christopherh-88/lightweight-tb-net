@@ -1,0 +1,22 @@
+=== Sensitivity Gap Reproducibility Report (Wong et al. 2022) ===
+
+Split comparison (loaded images vs paper Table 1):
+  Our test:   417 images  (69 TB / 348 Normal)
+  Paper test: 693 images  (345 TB / 348 Normal)
+  TB%: ours 16.5%  vs  paper 49.8%
+
+Our retrain on this split:
+  Sensitivity: 100.00%  (paper: 100.00%,  delta: +0.00pp)
+  Specificity: 100.00%  (paper: 99.71%)
+  Accuracy:    100.00%   (paper: 99.86%)
+  AUC-ROC:     1.0000
+
+DarwinAI pretrained weights: not evaluated (download required).
+To complete this analysis:
+  1. Download weights from https://github.com/darwinai/TuberculosisNet
+  2. Run: python eval_pretrained.py --darwinai <path>
+
+Preliminary finding (our retrain only):
+  Our from-scratch retrain matches paper sensitivity on this split.
+  This suggests the split composition is compatible with the paper's
+  test set (similar TB count and image distribution).

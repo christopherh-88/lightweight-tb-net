@@ -5,10 +5,10 @@ import torch.nn.utils.prune as prune
 import numpy as np
 import matplotlib.pyplot as plt
 from torch.utils.data import DataLoader
-from sklearn.metrics import confusion_matrix
 
 from model import LightweightTBNet
 from dataset import TBDataset, get_transforms
+from metrics import evaluate as _evaluate
 
 FINE_TUNE_EPOCHS = 5
 BATCH_SIZE = 16
@@ -51,21 +51,8 @@ def get_sparsity(model):
 
 
 def evaluate(model, loader):
-    model.eval()
-    all_preds, all_labels, latencies = [], [], []
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs = imgs.to(device)
-            start = time.perf_counter()
-            preds = model(imgs).argmax(dim=1)
-            latencies.append((time.perf_counter() - start) * 1000 / imgs.size(0))
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    matrix = confusion_matrix(all_labels, all_preds).astype(float)
-    acc = matrix.diagonal().sum() / matrix.sum()
-    sensitivity = matrix[1, 1] / matrix[1].sum()
-    specificity = matrix[0, 0] / matrix[0].sum()
-    return acc, sensitivity, specificity, np.mean(latencies)
+    acc, sens, spec, auc, lat = _evaluate(model, loader, device)
+    return acc, sens, spec, auc, lat
 
 
 def fine_tune(model, epochs):
@@ -103,16 +90,17 @@ for sparsity in SPARSITY_LEVELS:
     else:
         actual = 0.0
 
-    acc, sens, spec, lat = evaluate(model, test_loader)
+    acc, sens, spec, auc, lat = evaluate(model, test_loader)
     results.append({
         'target': sparsity,
         'actual': actual,
         'acc': acc,
         'sens': sens,
         'spec': spec,
+        'auc': auc,
         'lat': lat,
     })
-    print(f'  Accuracy: {acc*100:.2f}% | Sensitivity: {sens*100:.2f}% | Specificity: {spec*100:.2f}% | Latency: {lat:.2f}ms')
+    print(f'  Accuracy: {acc*100:.2f}% | Sensitivity: {sens*100:.2f}% | Specificity: {spec*100:.2f}% | AUC: {auc:.4f} | Latency: {lat:.2f}ms')
 
     if sparsity > 0:
         torch.save(model.state_dict(), f'checkpoints/pruned_{int(sparsity*100)}.pth')
@@ -141,19 +129,19 @@ print('\nSaved pruning_curve.png')
 report = f"""
 === Phase 3 Pruning Report ===
 
-Sparsity   Actual    Accuracy    Sensitivity  Specificity  Latency(ms)
---------   ------    --------    -----------  -----------  -----------
+Sparsity   Actual    Accuracy    Sensitivity  Specificity   AUC-ROC  Latency(ms)
+--------   ------    --------    -----------  -----------   -------  -----------
 """
 for r in results:
     report += (f"{int(r['target']*100):>6}%   {r['actual']*100:>5.1f}%"
                f"    {r['acc']*100:>7.2f}%    {r['sens']*100:>10.2f}%"
-               f"  {r['spec']*100:>10.2f}%  {r['lat']:>11.2f}\n")
+               f"  {r['spec']*100:>10.2f}%  {r['auc']:>8.4f}  {r['lat']:>11.2f}\n")
 
 report += f"""
 Delta from baseline (0% sparsity):
-  25% pruned | Acc: {(results[1]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[1]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[1]['spec']-results[0]['spec'])*100:+.2f}%
-  50% pruned | Acc: {(results[2]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[2]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[2]['spec']-results[0]['spec'])*100:+.2f}%
-  75% pruned | Acc: {(results[3]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[3]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[3]['spec']-results[0]['spec'])*100:+.2f}%
+  25% pruned | Acc: {(results[1]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[1]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[1]['spec']-results[0]['spec'])*100:+.2f}% | AUC: {(results[1]['auc']-results[0]['auc']):+.4f}
+  50% pruned | Acc: {(results[2]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[2]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[2]['spec']-results[0]['spec'])*100:+.2f}% | AUC: {(results[2]['auc']-results[0]['auc']):+.4f}
+  75% pruned | Acc: {(results[3]['acc']-results[0]['acc'])*100:+.2f}% | Sens: {(results[3]['sens']-results[0]['sens'])*100:+.2f}% | Spec: {(results[3]['spec']-results[0]['spec'])*100:+.2f}% | AUC: {(results[3]['auc']-results[0]['auc']):+.4f}
 """
 
 print(report)

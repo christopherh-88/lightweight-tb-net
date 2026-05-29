@@ -5,10 +5,10 @@ import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import DataLoader
 from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
-from sklearn.metrics import confusion_matrix
 
 from model import LightweightTBNet
 from dataset import TBDataset, get_transforms
+from metrics import evaluate as _evaluate
 
 EPOCHS = 15
 BATCH_SIZE = 16
@@ -50,21 +50,8 @@ def distillation_loss(student_logits, teacher_logits, labels, T=4, alpha=0.5):
 
 
 def evaluate(model, loader):
-    model.eval()
-    all_preds, all_labels, latencies = [], [], []
-    with torch.no_grad():
-        for imgs, labels in loader:
-            imgs = imgs.to(device)
-            start = time.perf_counter()
-            preds = model(imgs).argmax(dim=1)
-            latencies.append((time.perf_counter() - start) * 1000 / imgs.size(0))
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-    matrix = confusion_matrix(all_labels, all_preds).astype(float)
-    acc = matrix.diagonal().sum() / matrix.sum()
-    sensitivity = matrix[1, 1] / matrix[1].sum()
-    specificity = matrix[0, 0] / matrix[0].sum()
-    return acc, sensitivity, specificity, np.mean(latencies)
+    acc, sens, spec, auc, lat = _evaluate(model, loader, device)
+    return acc, sens, spec, auc, lat
 
 
 optimizer = torch.optim.Adam(student.parameters(), lr=LR)
@@ -88,7 +75,7 @@ for epoch in range(EPOCHS):
         total_loss += loss.item()
     scheduler.step()
 
-    val_acc, val_sens, val_spec, _ = evaluate(student, val_loader)
+    val_acc, val_sens, val_spec, _, _ = evaluate(student, val_loader)
     print(f'Epoch {epoch+1:>2}/{EPOCHS} | Loss: {total_loss/len(train_loader):.4f} | '
           f'Val Acc: {val_acc*100:.2f}% | Sens: {val_sens*100:.2f}% | Spec: {val_spec*100:.2f}%')
 
@@ -98,7 +85,7 @@ for epoch in range(EPOCHS):
         print(f'  --> New best sensitivity: {val_sens*100:.2f}%')
 
 student.load_state_dict(torch.load('checkpoints/student_best.pth', map_location=device))
-test_acc, test_sens, test_spec, test_lat = evaluate(student, test_loader)
+test_acc, test_sens, test_spec, test_auc, test_lat = evaluate(student, test_loader)
 
 sens_gap = abs(1.0 - test_sens) * 100
 within_2pct = 'YES' if sens_gap <= 2.0 else 'NO'
@@ -115,6 +102,7 @@ Test Set Results:
   Accuracy:         {test_acc*100:.2f}%
   Sensitivity:      {test_sens*100:.2f}%   (teacher: 100.00%, gap: {sens_gap:.2f}%)
   Specificity:      {test_spec*100:.2f}%
+  AUC-ROC:          {test_auc:.4f}
   Latency (ms):     {test_lat:.2f}
 
 Student matches teacher sensitivity within 2%: {within_2pct}

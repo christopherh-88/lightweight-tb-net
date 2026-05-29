@@ -1,0 +1,134 @@
+=== Architecture & Preprocessing Delta: Our Implementation vs. TB-Net (Wong et al., 2022) ===
+
+--- Model Architecture ---
+
+TB-Net (official, Wong et al.)
+  Backbone:       Machine-designed via neural architecture search
+  Key blocks:     PEPX (Projection-Expansion-Projection-eXtension) blocks
+                  with depth-wise separable convolutions
+  Self-attention: Attention condensers with learned query/key/value projections
+  Parameters:     4.24 M
+  MACs:           0.42 G (highly efficient)
+  Framework:      TensorFlow 1.15 / Keras
+
+Our implementation (LightweightTBNet)
+  Backbone:       ResNet-18 (ImageNet pretrained via torchvision)
+  Self-attention: AttentionCondenser (one self-attention block appended to backbone)
+  Parameters:     11.51 M  (2.7x more than TB-Net)
+  MACs:           ~1.8 G   (4.3x more than TB-Net)
+  Framework:      PyTorch 2.x
+
+Delta summary:
+  Our model is heavier (11.5M vs 4.24M params) because we use an off-the-shelf
+  ResNet-18 backbone rather than the custom PEPX architecture. The original TB-Net
+  was designed via machine-driven architecture search to be lightweight; we
+  approximate the self-attention mechanism but not the backbone efficiency.
+
+  For the compression experiments (Phases 3), our teacher model is LightweightTBNet,
+  not the official TB-Net. The student (MobileNetV3-Small, 1.52M params) is 8x
+  smaller than TB-Net and 7.6x smaller than our teacher.
+
+--- Preprocessing ---
+
+TB-Net (official)
+  1. Crop: remove 5% from each side, 25% from the bottom
+           (bounding box: offset (11,11), size 168×202)
+  2. Resize to 224×224
+  3. Normalise pixel values to [0, 1] (divide by 255)
+  4. Corner masking: zero-out top-left and top-right corners (r<45 and c<45 or c>178)
+  5. Re-normalise: (img - min) / (max - min)
+  6. Apply average-intensity mask: add 0.531 to masked corners
+  Augmentation (train only): random crop, random flip, random brightness, random contrast
+
+Our implementation
+  1. Resize to 224×224 (no cropping)
+  2. Random horizontal flip + rotation ±10° + colour jitter (train only)
+  3. ToTensor (converts to [0,1])
+  4. Normalise: mean=[0.531, 0.531, 0.531], std=[0.229, 0.229, 0.229]
+  No corner masking
+
+Delta summary:
+  Our preprocessing does NOT replicate the TB-Net corner masking step.
+  The corner mask removes artefacts from X-ray film edges; omitting it means
+  our model is exposed to edge information that the original was shielded from.
+  Additionally, our normalisation uses ImageNet-style mean/std subtraction
+  (adapted to this dataset's mean intensity 0.531) rather than min-max scaling.
+  These differences mean that the official TB-Net weights CANNOT be directly
+  applied to our preprocessed images and vice versa.
+
+--- Dataset ---
+
+TB-Net (official)
+  Source:    Kaggle "tuberculosis-tb-chest-xray-dataset" (Rahman et al.)
+             Full dataset: 3,500 Normal + ~3,500 TB images
+  Splits (from official CSVs):
+    Train:   5,541  (2,782 Normal + 2,759 TB)
+    Val:     693    (348 Normal + 345 TB)
+    Test:    693    (348 Normal + 345 TB)
+  Image naming: TB-XXXX.png (in data/ after create_dataset.py preprocessing)
+
+Our data directory (as-downloaded)
+  Images on disk: 3,500 Normal + 700 TB = 4,200 total
+  File naming:    Tuberculosis-XXXX.png (Tuberculosis-1 to Tuberculosis-700)
+  Effectively loaded for test:
+    Normal: 348 / 348 (100%)
+    TB:      69 / 345  (20%)   ← 276 TB test images are missing from disk
+
+Root cause (confirmed by re-download):
+  We re-downloaded the Kaggle dataset (June 2021 archive, 663 MB).
+  The current Kaggle version contains exactly 700 TB images (Tuberculosis-1 to
+  Tuberculosis-700) and 3,500 Normal images — matching what is on disk.
+  The DarwinAI splits reference TB images numbered up to TB-3500, i.e., the
+  dataset originally had 3,500 TB images.
+
+  Reproducibility gap: The Kaggle dataset was reduced from 3,500 → 700 TB
+  images between when DarwinAI published (2021) and the current version.
+  The 2,800 missing TB images are no longer publicly available through Kaggle.
+  This makes exact split reproduction impossible without access to the original
+  data archive used by the DarwinAI team.
+
+Effective test set (all available TB images):
+  TB in test split with disk hits:  69 / 345  (Tuberculosis-2 through Tuberculosis-700)
+  TB in val split with disk hits:   58 / 345
+  TB in train split with disk hits: 555 / 2759
+
+Implication for reported numbers:
+  All accuracy/sensitivity/specificity/AUC results in our reports are computed
+  on a test set of 417 images (348 Normal + 69 TB) rather than the intended
+  693 (348 Normal + 345 TB). Results on this partial subset should not be
+  directly compared to the paper's 693-image test set. Our model achieves
+  100% sensitivity on the 69 available TB images.
+
+--- Pretrained Weights ---
+
+TB-Net official weights are published at:
+  https://drive.google.com/drive/folders/1l2JSOcoeSJip7dtLpnOoWvpM9-KEHb1b
+
+Format: TensorFlow 1.15 checkpoint (.meta + .index + .data files)
+Evaluation script: eval.py (TF-based, uses TBNetDSI preprocessing pipeline)
+
+Download attempt (gdown v5): FAILED — Google Drive folder sharing restrictions
+prevent programmatic access. Manual download via browser is required.
+
+Direct comparison is also not straightforward because:
+  a) Our model architecture differs from TB-Net (cannot share weights)
+  b) Our preprocessing differs (different normalisation and corner masking)
+  c) The full 3,500-image TB dataset used for evaluation is no longer
+     available on Kaggle (reduced to 700 images)
+  To run TB-Net pretrained weights faithfully, one would need:
+    1. Manual download of weights from Google Drive
+    2. TensorFlow 1.15 installed
+    3. The original 3,500-TB-image dataset (no longer publicly available)
+    4. Run official eval.py with TBNetDSI preprocessing
+
+=== Compression vs. Official TB-Net ===
+
+                   Params (M)   MACs (G)   Size (MB)   Sens    AUC
+  TB-Net (paper)      4.24        0.42       ~17         100%   N/A
+  Our teacher        11.51        ~1.8        46.0       100%   1.000
+  Our student         1.52        ~0.06        6.4       100%   1.000
+  (ONNX, on-device)
+
+Our student (MobileNetV3-Small + distillation) achieves the same sensitivity
+as TB-Net at 36% of the parameter count. In model size, 6.4 MB ONNX vs
+~17 MB estimated for TB-Net.

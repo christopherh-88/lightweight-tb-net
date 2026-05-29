@@ -1,14 +1,14 @@
 
 === Phase 3 Pruning Report ===
 
-Sparsity   Actual    Accuracy    Sensitivity  Specificity  Latency(ms)
---------   ------    --------    -----------  -----------  -----------
-     0%     0.0%     100.00%        100.00%      100.00%         4.27
-    25%    25.0%      99.76%        100.00%       99.71%         0.47
-    50%    50.0%     100.00%        100.00%      100.00%         0.69
-    75%    75.0%     100.00%        100.00%      100.00%         0.39
+Sparsity   Accuracy  Sensitivity  Specificity   AUC-ROC
+----------------------------------------------------------
+  0%        100.00%      100.00%      100.00%    1.0000
+  25%       100.00%      100.00%      100.00%    1.0000
+  50%       100.00%      100.00%      100.00%    1.0000
+  75%       100.00%      100.00%      100.00%    1.0000
 
-Delta from baseline (0% sparsity):
-  25% pruned | Acc: -0.24% | Sens: +0.00% | Spec: -0.29%
-  50% pruned | Acc: +0.00% | Sens: +0.00% | Spec: +0.00%
-  75% pruned | Acc: +0.00% | Sens: +0.00% | Spec: +0.00%
+Delta from 0% baseline:
+  25% pruned | Acc: +0.00% | Sens: +0.00% | Spec: +0.00% | AUC: +0.0000
+  50% pruned | Acc: +0.00% | Sens: +0.00% | Spec: +0.00% | AUC: +0.0000
+  75% pruned | Acc: +0.00% | Sens: +0.00% | Spec: +0.00% | AUC: +0.0000
